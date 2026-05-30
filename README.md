@@ -2,7 +2,7 @@
 
 Novel Translation Studio is an offline, single-user application for semi-automatic long-form novel translation. The project focuses on controlled translation workflow: stable text IDs, glossary management, character relationship timeline, pronoun context, dialogue labels, batch translation, human polish, and export.
 
-This repository is currently in planning/contract stage. Implementation should begin from `phase/00_app_foundation.md`.
+This repository has started implementation from `phase/00_app_foundation.md`.
 
 ## Core Idea
 
@@ -142,11 +142,46 @@ MVP is successful when a user can:
 
 ## Current Status
 
-Planning contract is complete.
+Planning contract and MVP phases 00 through 11 are implemented:
 
-Implementation has not started yet. Begin with:
+- Project creation/opening, source/segment import, validation, and workflow state.
+- Source Preparer Tkinter sub-app.
+- Skeleton, item, sub-item, glossary, relationship, dialogue-label, translation, series-update, polish, and export pipelines.
+- Prompt Studio with editable project prompt files, manual result validation/save, and OpenAI-compatible API calls.
+- Relationship timeline canvas.
+- Database Editor safety hatch for core volume and series JSON tables.
+- Config screen for app-level provider settings, provider connection tests, batch count, and project processing settings.
+- TXT, Markdown, and HTML export from polished overrides plus translations.
+- Offline-first file storage with backups for table-level saves and series promotion.
 
-```text
-phase/00_app_foundation.md
+## Development
+
+Backend:
+
+```powershell
+python -m pip install -r backend/requirements.txt
+cd backend
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
+Frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Source Preparer sub-app:
+
+```powershell
+.\.venv\Scripts\python.exe -m source_preparer
+```
+
+Verification:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest backend\tests tests
+cd frontend
+npm run build
+```
