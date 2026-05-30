@@ -1,0 +1,333 @@
+******Định nghĩa cơ bản********
+
+Định nghĩa: Ứng dụng Novel Translate Studio là ứng dụng chuyển ngữ tiểu thuyết dài kì bán tự động, kiểm soát hoàn toàn các thuật ngữ, quan hệ để cho ra kết quả dịch thuật chính xác nhất, đặc biệt là với các ngôn ngữ có hệ thống đại từ nhân xưng phức tạp như tiếng Việt.
+
+
+Backend: Python
+API: FastAPI
+Frontend: Web app
+Canvas: React + React Flow
+
+Các scene cơ bản:
+- Project manager: Tạo và quản lý project, thiết lập genre và các thông tin cơ bản để chuẩn bị xử lý tiểu thuyết.
+- Import source: Nhập source text vào và lưu vào project theo đúng chuẩn để tránh bị lỗi khi xử lý.
+- prompt studio: sử dụng prompt gốc + các thành tố để tạo thành prompt hoàn chỉnh cho từng công việc trong workflow. Có thể dùng prompt để nạp vào khung chat của các LLM lớn (người dùng paste kết quả vào, có validate) hoặc thông qua API.
+- Database Editor: kiểm soát toàn bộ các thành phần trong hệ thống, chỉnh sửa và can thiệp theo nhu cầu.
+- Polish center: Ghép bản dịch vào khung xương đã xử lý. Tại đây người dùng có thể chỉnh sửa lại bản dịch theo nhu cầu của họ. Bên cạnh đó có thể edit phù hợp với định dạng chuẩn như word, markdown, html làm nguyên liệu cho export.
+- Export: Sử dụng bản dịch đã polish để export ra đúng chuẩn người dùng yêu cầu. Ví dụ như txt, md, epub...
+- Config: Ở đây có thể config API key, server, batch, blah blah blah... Nói chung là vừa có thể dùng API vừa có thể dùng local như llama.cpp, lmstudio...
+
+Vài kiến trúc cơ bản cần thiết giải thích:
+- Định nghĩa character trong glossary và relationship
+Glossary có một Đông Sơn, relationship lại có một Đông Sơn khác. Hai tầng bị duplicate identity.
+Giải quyết: Glossary trở thành nơi định danh entity gốc. Relationship canvas chỉ được dùng những glossary entry có type là Character, Không tạo lại character riêng trong relationship nữa.
+
+- Canvas relationship:
+Thiết kế tương tự như comfyUI, các node (character) có thể kéo thả, liên kết với các node khác để tạo thành mạng lưới relationship. Canvas này cũng nhận tín hiệu pronoun giữa 2 character trong database để vẽ liên kết (ở phần sau).
+Đặc biệt canvas có một Vector timeline. 
+Quan hệ nhân vật thay đổi theo thời gian. Đầu truyện A và B là kẻ thù, sau đó thành bạn. Nếu relationship là bảng phẳng 1D thì rất khó theo dõi và sửa.
+Canvas chỉ là mặt phẳng trực quan hóa. Timeline thực chất là filter/render state theo biến time.
+Khi tua timeline tới chapter nào, canvas render trạng thái quan hệ tại chapter đó.
+
+************ Quy trình làm việc mẫu *****************
+Create Project -> Select Genre, đặc điểm chung của tiểu thuyết.
+Bước 0: Prepare source bằng sub-app.
+Bước 1: Input Source
+- 1.1: Copy full volume/series vào thư mục source. Tên file sẽ là volume.XX.json.
+- 1.2: Copy full segment file vào thư mục segment. Tên file sẽ là volume.XX.segment.json.
+
+*** Quy trình với Volume 1 ***
+
+Bước 2: Prepare khung xương của văn bản
+
+- 2.1: Xác định narration và dialogue trong segment -> Gán ID cho chúng.
+- 2.2: Tháo Narration và dialogue ra thành chunk (config max token) -> Gán sub-ID cho chúng.
+Sau bước này, về mặt cơ bản, văn bản chỉ còn là một chuỗi placeholder của các ID, không còn text nữa.
+
+Bước 3: Extract glossary bằng small LLM
+
+- 3.1: Config provider API hoặc server local LLM. Có thể thông qua llama.cpp, olama, lmstudio tuỳ config.
+- 3.2: Prepare items to extract -> Prompt gốc + Sub-ID -> LLM -> Structure output json (ID, source, type).
+Sau bước này, toàn bộ glossary được tách hoàn toàn ra khỏi text gốc. Lưu trữ toàn bộ dưới dạng "Draft_Glossary".
+
+Bước 4: Merge glossary bằng thuật toán.
+
+- 4.1: Prepare-merge: Quét qua toàn bộ draft glossary -> Tìm thuật ngữ trùng nhau ở mức độ hoàn toàn -> Gom nhóm tạm thời thành các "alias", gắn tag "human review".
+- 4.2: Human review lần 1, nếu đồng ý cho merge, xoá tag "human review" -> Ấn nút "Merge" cuối cùng.
+- 4.3: Link glossary. Human được phép "Link" hai hay nhiều glossary với nhau. Chúng sẽ cùng thừa hưởng đặc tính "type". Trong schema mặc định sẽ có biến "link = null", nhưng nếu bị link thì sẽ là "link = 01, 04, xx". Những Glossary nào được link sẽ cùng "đại diện cho một khái niệm, khác cách diễn đạt".
+Tao sẽ giải thích thêm về schema của glossary link, vì đây là khái niệm mới. 
+Prompt dịch thuật sẽ dịch CHÍNH XÁC CỤM glossary mà nó cần trong chunk của nó, vì vậy link không hoạt động ở đây mà link sẽ hoạt động ở bước XÁC ĐỊNH QUAN HỆ + LABEL DIALOGUE.
+Nhưng schema cũng cực kỳ nhẹ nhàng (tao viết nhanh thôi, không đúng cú pháp đâu)
+{Source: 东山,东山隐士...
+Type: Character}
+Tại sao schema lại đơn giản thế này? Vì bản thân các từ đó đại diện cho 1 người, AI chỉ cần xác định được là người này có liên quan đến người kia, không cần phải dịch thuật ở đây. Khi cung cấp đủ "identify" của một người, việc nhận ra người đó là quá dễ.
+
+Sau bước này, hầu hết đã tồn tại thành một bảng từ điển thực sự. Không lọc trùng ở cấp độ "một phần" bởi vì sẽ làm phức tạp thêm schema và gây rối bảng từ điển không cần thiết.
+
+
+Bước 5: Tạo glossary cho TỪNG ITEMS.
+
+- 5.1: Quét từng ID của narration và dialogue -> Extract Glossary tương ứng.
+
+Sau bước này, bất cứ thành phần nào cũng đã có glossary cho riêng nó.
+Ví dụ: "Ngươi nói về Đông Sơn cư sĩ?" -> câu thoại này dù sau này có dịch hay làm gì đi nữa nó đều gắn liền với glossary "Đông Sơn cư sĩ".
+
+- 5.2: Quét, merge các thành phần glossary bị trùng trong segment. Ví dụ trong segment có 3 nơi lặp lại "Đông Sơn", glossary chuẩn cho segment chỉ có 1 từ "Đông Sơn" mà thôi.
+
+Đây là bước chuẩn bị nguyên liệu cực kỳ quan trọng cho các bước sau này.
+
+Bước 6: Extract relationship ở cấp độ "segment"
+
+- 6.1: Prepare nguyên liệu cho big LLM:
++ Nhận segment ID (Để đánh giá time).
++ Nhận về text segment.
++ Nhận về prompt trích xuất.
++ Nhận Json output policy.
++ Nhận về glossary chuẩn segment (đã chuẩn bị phía trên).
+
+- 6.2: Trích xuất Relationship và Pronoun tương ứng.
+Ví dụ Đông Sơn gọi Thuý Thuý là cháu và xưng lão phu. 
+Items trả về rất ngắn gọn:
+{ID 7 -> ID 10,
+Pronoun: lão phu
+Relationship: học trò
+Type: Allies
+Time: 007_01} (nghĩa là segment 007, chapter 1)
+{ID 10 -> ID 7,
+Pronoun: cháu
+Relationship: thầy
+Type: Allies
+Time: 007_01}
+Cái nào không rõ thì null.
+
+
+Bước 7: Dựng canvas relationship.
+Không cần quá phức tạp, chỉ cần 2 character có mối liên quan, không cần biết là đơn phương hay song phương, đều được dựng lên.
+Quy ước rõ: Mối quan hệ ally thì dây nối màu xanh lá cây, mối quan hệ enemy thì màu đỏ, neutral vàng (đèn vàng), unknown (xám), love hồng...... 
+Sau bước này, human có thể review và sửa relationship một cách trực quan và nhẹ nhàng nhất.
+
+Tuy nhiên còn một bước phải làm đó là merge relationship. Bởi vì như ví dụ trên, ở chapter 1, Đông Sơn và Thuý Thuý là thầy trò, mối quan hệ đó không đổi tới chapter 10. Nhưng nếu cứ như thế thì mỗi chapter đều "lặp lại" quan hệ 2 người một lần sao? Nó sẽ là lãng phí. Vì vậy phải có bước merge.
+- So sánh pronoun và type. Nếu cả hai trùng lặp hoặc không trùng lặp, chuyển sang phần xử lý khác. Nếu 1 trong 2 trùng lặp, đánh dấu conflict, cần review. 
+- Xử lý trùng lặp hoàn toàn: bỏ hết toàn bộ các nội dung relationship ở phía sau, chỉ giữ cái đầu tiên làm timestamp
+- Xử lý không trùng lặp: không làm gì hết, vì nếu đã có thay đổi lớn thì chắc chắn phải chốt timestamp.
+
+Bước 8: Label Dialogue.
+Lưu ý là bước này KHÔNG CẦN RELATIONSHIP nhé.
+
+- 8.1: Prepare nguyên liệu cho big LLM:
++ Nhận về text segment.
++ Nhận về prompt trích xuất.
++ Nhận Json output policy.
++ Nhận về glossary chuẩn segment. 
+
+- 8.2: Nhận kết quả cũng đơn giản, không cần trả full text, cũng không cần trả hội thoại.
+{Dialogue ID 10: ID 7 -> ID 10}
+
+Bước 9: Dịch thuật.
+
+- 9.1: CHuẩn bị nguyên liệu dịch thuật: Mỗi item sẽ mang theo:
++ Prompt dịch thuật.
++ Text tương ứng + label dialogue tương ứng.
++ Glossary tương ứng.
++ Pronoun tương ứng.
++ Json output policy.
+
+- 9.2: batch dịch thuật hàng trăm request bắn lên server với tốc độ ánh sáng.
+Nhận các ID lỗi, retry lại đến khi hoàn thiện.
+
+- 9.3: Kết quả nhận về cũng cực ngắn gọn và đơn giản, không chứa một chi tiết thừa.
+{ID: Narration_01,
+Text: accnạnajjsjsj}
+
+Bước 10: Lắp ghép các mảnh vào khung xương -> Tái sinh.
+
+Màn hình preview/export:
+- Lắp các mảnh text đã dịch vào khung xương ID.
+- Human review, sửa inline tại từng ID.
+
+==> Cuối cùng là export.
+
+Tại sao tao không có bước QA/Fix tại đây? Ha ha... băm đến mức độ nguyên tử như thế mà AI còn dịch sai nữa thì tao nghĩ không cần thiết phát triển AI tiếp đâu.
+
+
+Bước 11: Lập series glossary và series relationship.
+
+- Đẩy toàn bộ glossary và relationship đã chuẩn hoá lên series. 
+
+
+*** Quy trình đối với volume 2 trở đi ***
+
+Cập nhật Bước 4
+- 4.0. So sánh đối chiếu series glossary.
++ Nếu từ đã có từ series -> inherit, không xử lý gì thêm. (Đặc biệt là tên riêng sẽ được inherit 100%).
++ Nếu chưa tồn tại trong series glossary, thuộc tính "time" của thuật ngữ mới sẽ mang giá trị của volume.
+- 4.4. Sau khi đã được human review, cập nhật glossary vào series glossary theo cơ chế "bản sửa mới có giá trị mạnh hơn bản cũ". 
+
+Cập nhật bước 7. Bước xử lý relationship sẽ khác hơn glossary một chút.
+- So sánh đối chiếu series relationship. Nếu từ đã có từ series và không thay đổi nhiều -> inherit. Nếu thay đổi? Xử lý logic như các tag time bình thường khác.
+
+
+
+
+
+******************************************
+Schema 1: Extract Item
+
+{
+	"item_ID": "",
+	"type": "narration|dialogue",
+	"text": ""
+}
+
+Schema 1.1: Split sub_item
+
+{
+	"item_ID": "",
+	"sub_item_ID": "",
+	"text": ""
+}
+
+
+Schema 2: Glossary
+{
+	"glossary_ID": "",
+	"volume": 1,
+	"source": "",
+	"trans": "",
+	"type": "character|alias|title|epithet|location|organization|weapon|artifact|magic|skill|technique|named_attack|concept|other",
+	"alias": [],
+	"human_review": false,
+	"link": [],
+	"item_ID": [],
+	"segment_ID": []
+}
+
+Schema 2.1: Extract Glossary
+
+{
+	"draft_glossary_ID": "",
+	"sub_item_ID": "",
+	"source": "",
+	"type": "character|alias|title|epithet|location|organization|weapon|artifact|magic|skill|technique|named_attack|concept|other"
+}
+
+
+Schema 3: Relationship + Pronoun
+
+{
+	"relationship_ID": "",
+	"speaker": "glossary_ID",
+	"listener": "glossary_ID",
+	"type": "ally|enemy|neutral|unknown|love|family",
+	"pronoun": "",
+	"alias_pronoun": [],
+	"time": ""
+}
+
+Schema 4: Label dialogue
+
+{
+	"item_ID": "",
+	"speaker": "",
+	"listener": "",
+	"human_review": false
+}
+
+Schema 5: Translate
+
+{
+	"item_id": "",
+	"trans_text": ""
+}
+
+*****************************************
+Prompt 1: Extract glossary.
+"""
+	[Prompt]
+	
+	[JSON output policy]
+	
+	[sub-item]
+	
+	Schema 2.1 extract glossary
+"""
+
+Prompt 2: Extract relationship
+"""
+	[prompt]
+	
+	[JSON output policy]
+	
+	[Glossary segment type character]
+	
+	[segment item]
+	
+	Schema 3: Relationship + Pronoun
+"""
+
+Prompt 3: label dialogue
+"""
+	[prompt]
+	
+	[JSON output policy]
+	
+	[Glossary segment type character]
+	
+	[segment item]
+	
+	Schema 4: Label dialogue
+"""
+
+Prompt 4: Translate
+"""
+	[prompt]
+	
+	[JSON output policy]
+	
+	[Glossary for item]
+	
+	[Pronoun (dialogue)]
+	
+	[item narration | item dialogue đã được label]
+	
+	Schema translate (còn thiếu)
+"""
+
+Schema Translate:
+
+{
+	"item_id": "",
+	"trans_text": ""
+}
+
+***** Một số thuật toán dùng trong app *****
+
+1. Skeleton builder:
+
+- Xét từ đầu đến cuối trong SEGMENT. Mỗi lần xuống dòng mà không rỗng thì tính là một "đoạn".
+- Xét đoạn là thoại hay dẫn chuyện. Đánh dấu chúng thành type của chúng.
+- Tính theo vị trí của chúng mà đánh ID.
+	+ Narration đầu tiên sẽ có ID: segment_ID+nar+ID. Ví dụ segment 001_01, narration 01 sẽ có ID = 001_01_nar_01. Dialogue tương tự với tag là diag.
+	+ Dựa vào công thức này thì có thể dễ dàng truy ngược về điểm xuất phát.
+	+ Lưu kết quả vị trí vào segment_skeleton.json. Ví dụ: 001_01_nar_01\n001_01_diag_01\n001_01_nar_02...
+	+ Lưu tất cả các item vào segment_flesh.json theo đúng schema 1.
+	
+2. Sub-item splitter: 
+- Đối với narration: Xét từ đầu đến khi vừa đủ token config, lùi lại dấu chấm câu gần nhất, cắt ra tạo thành 1 chunk. ID của chunk sẽ có dạng item_id+sub item id. Ví dụ sub item đầu tiên của item 001_01_nar_02 = 001_01_nar_02_01
+- Lưu subitem phù hợp với schema 1.1.
+- Diaglogue không tách chunk dù thoại có dài đến đâu.
+Lưu ý: Sub-item không cần ghép. Subitem cung cấp glossary, không cung cấp quan hệ, dịch thuật...
+
+3. Glossary Scanner: querry tìm kiếm bình thường thôi. cầm từng item, quét thẳng vào segment, trúng thì hốt, không thì thôi.
+
+4. Segment Glossary cũng tương tự, quét trúng thì nạp vào, không trúng thì không nạp.
+
+5. Nhắc lại thêm một lần nữa. LINK LÀ ĐẠI DIỆN VỀ MẶT KHÁI NIỆM CHO NHIỀU GLOSSARY CHARACTER, NÓ KHÔNG CẦN PHẢI BIẾT BAO NHIÊU GLOSSARY BÊN TRONG NÓ. Đông Sơn cư sĩ dù bị gọi là chó thì lão vẫn là Đông Sơn.
+Điểm cần nhấn mạnh ở đây: LINK là để cho con người "hiểu" họ đang edit cái pronoun gì. Còn về mặt relationship, con Big LLM đã nhận trách nhiệm rồi.
+
+6. Relationship timeline:
+- Dùng phương pháp append vào bảng relationship gốc. 
+- Không được xem chúng như một vector, tại từng timestamp, chúng là một thực thể hoàn toàn độc lập.
+
+7. Valid output thì đơn giản hơn, API đã có thể kích hoạt structure output, nếu không trả đúng structure thì output được xem là sai từ phía provider rồi. Nếu cẩn thận chỉ cần đặt một trạm gác nhẹ là xong.
+
